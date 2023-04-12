@@ -1,0 +1,284 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+using System.IO;
+using Microsoft.Office.Interop.Word; using System.Text.RegularExpressions;
+using ExcelDataReader;
+     namespace OperationOrder
+{
+    public partial class Form1 : Form
+    {        
+        Dictionary<string, WdSaveFormat> fileType = new Dictionary<string, WdSaveFormat>();         Dictionary<string, string> line2Station = new Dictionary<string, string>();         string iniDir = Directory.GetCurrentDirectory();         DataSet excel1;         string nextLine;         string time = "时间：       时        分";         Table newTable;         string stationName;         string sign;         public Form1()
+        {             InitializeComponent();           
+            #region 初始化2个文件夹的路径
+            string ini = iniDir + "\\默认路径.ini";
+            if (File.Exists(ini))
+            {
+                string[] tmp = File.ReadAllLines(ini, Encoding.GetEncoding("GB2312"));
+                richTextBox1.Text = tmp[0];
+                richTextBox2.Text = tmp[1];
+            } 
+            #endregion            
+        }
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            #region 初始化文件类型，默认原来是什么文件就保存为什么文件
+            string key1;
+            foreach (WdSaveFormat fm in Enum.GetValues(typeof(WdSaveFormat)))
+            {
+                  key1 = fm.ToString().Replace("wdFormat", "");
+                if (!fileType.ContainsKey(key1))
+                    fileType.Add(key1, fm);
+            }
+            #endregion
+            #region 提取数据库数据，生成线路-厂站映射表
+            try
+            {
+                FileStream stream = File.Open(iniDir + @"\数据库.xlsx", FileMode.Open, FileAccess.Read);
+                IExcelDataReader excelReader = ExcelReaderFactory.CreateOpenXmlReader(stream);
+                  excel1 = excelReader.AsDataSet(new ExcelDataSetConfiguration()
+                {
+                    ConfigureDataTable = (tableReader) => new ExcelDataTableConfiguration() { UseHeaderRow = true }
+                });                 excelReader.Close();             }
+            catch (Exception)
+            {
+                MessageBox.Show("请先关闭“数据库.xlsx文件”");
+                this.Close();                 return;
+            }
+             foreach (DataTable dt in excel1.Tables)             {
+                switch (dt.TableName)
+                {
+                    case "线路厂站映射表":
+                        foreach (DataRow item in dt.Rows)                             line2Station.Add(item[0].ToString(), item[2].ToString() + item[1].ToString());
+                        break;
+                    default:
+                        break;
+                }
+            }
+            #endregion
+        }
+        private void button2_Click(object sender, EventArgs e)         {
+            FolderBrowserDialog folder = new FolderBrowserDialog();            
+            folder.Description = "选择传票文件所在的文件夹";
+            if (folder.ShowDialog() == DialogResult.OK)           
+                richTextBox1.Text = folder.SelectedPath;           
+        }
+         private void button3_Click(object sender, EventArgs e)         {
+            FolderBrowserDialog folder = new FolderBrowserDialog();
+            folder.Description = "选择待存放操作票的文件夹";
+            if (folder.ShowDialog() == DialogResult.OK)
+                richTextBox2.Text = folder.SelectedPath;
+        }
+         private void button1_Click(object sender, EventArgs e)         {
+            #region 排除异常情况
+            if (!Directory.Exists(richTextBox1.Text))
+            {
+                MessageBox.Show("不存在文件夹：" + richTextBox1.Text + "，请修改传票文件夹的路径");
+                return;
+            }
+            if (!Directory.Exists(richTextBox2.Text))
+            {
+                MessageBox.Show("不存在文件夹：" + richTextBox2.Text + "，请修改操作票文件夹的路径");
+                return;
+            }
+            try
+            {
+                Word1 word1 = new Word1();
+                word1.wordApp.Quit();             }
+            catch (Exception)
+            {
+                MessageBox.Show("电脑需要安装Office 2007及以上版本，或者安装WPS 2013及以上版本，本程序才能运行");
+                return;
+            }
+            #endregion  
+             string[] docs = GetFiles(richTextBox1.Text, "*.doc?", false);
+            string result = "";
+            foreach (string item in docs)
+            {
+                if (OperationOrderGen(item, richTextBox2.Text))
+                    label1.Text = item + "生成操作票成功";
+                else
+                    label1.Text = item + "生成操作票失败";
+                result += label1.Text+"\r\n";
+                label1.Visible = true;
+                label1.Refresh();
+            }
+            label1.Visible = false;
+            File.WriteAllText(iniDir + "\\默认路径.ini", richTextBox1.Text + "\r\n" + richTextBox2.Text,Encoding.GetEncoding("GB2312"));
+            MessageBox.Show(result); 
+        }
+               private string[] GetFiles(string path, string extention, bool all)         {
+            string[] docs;
+            if (all)
+                docs = Directory.GetFiles(path, extention, SearchOption.AllDirectories);
+            else
+                docs = Directory.GetFiles(path, extention, SearchOption.TopDirectoryOnly);
+            FileInfo file1;
+            List<string> docs2 = new List<string>();
+            foreach (string item in docs)
+            {
+                try
+                {
+                    file1 = new FileInfo(item);
+                    if ((file1.Attributes & FileAttributes.Hidden) != FileAttributes.Hidden)
+                        docs2.Add(item);
+                }
+                catch (Exception) { }
+            }
+            return docs2.ToArray();
+        }
+        private void InitialTable(Word1 word1)         {        
+            int nn = 1;
+            word1.curDoc.Paragraphs.Last.OutlineLevel = WdOutlineLevel.wdOutlineLevel1;             word1.curDoc.Paragraphs.Last.Range.Font.Size = 20;
+            word1.curDoc.Paragraphs.Last.Range.Font.Bold = 4;
+            word1.curDoc.Paragraphs.Add();             word1.curDoc.Paragraphs.Last.OutlineLevel = WdOutlineLevel.wdOutlineLevelBodyText;             word1.curDoc.Paragraphs.Last.Range.Font.Size = 12;
+            word1.curDoc.Paragraphs.Last.Range.Font.Bold = 0;
+            word1.curDoc.Paragraphs.Add();             newTable = word1.curDoc.Tables.Add(word1.curDoc.Paragraphs.Last.Range, 20, 2);             newTable.Borders.InsideLineStyle = WdLineStyle.wdLineStyleSingle;             newTable.Borders.OutsideLineStyle = WdLineStyle.wdLineStyleDouble;             newTable.Columns[1].Width = 50;             newTable.Columns[2].Width=450;             newTable.AutoFitBehavior(WdAutoFitBehavior.wdAutoFitContent);             newTable.Rows.Alignment = WdRowAlignment.wdAlignRowCenter;             newTable.Cell(nn, 1).Range.Text = "顺序";
+              newTable.Cell(nn, 1).Range.Bold = 2;             newTable.Cell(nn, 2).Range.Text = "操作步骤";
+            newTable.Cell(nn, 2).Range.Bold = 2;             newTable.Cell(nn, 2).Range.Paragraphs.Alignment = WdParagraphAlignment.wdAlignParagraphCenter;             nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();            
+        }
+         private void Repair2Operation(Word1 word1,string[] item)         {             word1.curDoc.Paragraphs.Last.Range.Text = "操作任务：将" + stationName + "10kV" + item[2]
+                                + item[1] + item[3] + nextLine + "由检修状态转运行状态";
+            InitialTable(word1);             int nn = 2;             newTable.Cell(nn, 2).Range.Text = "经调度令：将" + stationName + "10kV" + item[2]
+                + item[1] + item[3] + nextLine + "由检修状态转热备用状态；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "发令人：              指令号：          " + time + "；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "核准" + stationName + "10kV" + item[2]
+                + item[1] + item[3] + "间隔位置；";
+            if (word1.curDoc.Name.Contains("有气压表"))             {
+                nn++;                 newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+                newTable.Cell(nn, 2).Range.Text = "检查" + item[2] + item[3] + "气压表指示确在正常范围；";
+            }
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] +
+                item[3].Replace("开关", "40地刀") + "操作位置解锁；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "拉开" + item[2] +
+                item[3].Replace("开关", "40地刀") + "（" + time + "）；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "检查" + item[2] +
+                item[3].Replace("开关", "40地刀") + "确在拉开位置；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] +
+                item[3].Replace("开关", "40地刀") + "操作位置上锁；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] +
+                item[3] + "操作把手取下" + sign;
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "汇报发令人（发令人：              " + time + "）；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "再经调度令：合上" + stationName + "10kV" + item[2]
+                + item[1] + item[3] + "；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "发令人：              指令号：          " + time + "；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] + item[3] + "操作位置解锁；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "合上" + item[2] + item[3] + "（" + time + "）；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "检查" + item[2] + item[3] + "确在合闸位置；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] + item[3] + "操作位置上锁；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "汇报发令人（发令人：              " + time + "）。";         
+        }
+             private void Operation2Repair(Word1 word1, string[] item)         {             word1.curDoc.Paragraphs.Last.Range.Text = "操作任务：将" + stationName + "10kV" + item[2]
+                                           + item[1] + item[3] + nextLine + "由运行状态转检修状态";             InitialTable(word1);             int nn = 2;             newTable.Cell(nn, 2).Range.Text = "经调度令：断开" + stationName + "10kV" + item[2] + item[1] + item[3] + "；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "发令人：              指令号：          " + time + "；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "核准" + stationName + "10kV" + item[2]
+                + item[1] + item[3] + "间隔位置；";
+            if (word1.curDoc.Name.Contains("有气压表"))             {
+                nn++;                 newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+                newTable.Cell(nn, 2).Range.Text = "检查" + item[2] + item[3] + "气压表确在正常范围；";
+            }
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] + item[3] + "操作位置解锁；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "断开" + item[2] + item[3] + "（" + time + "）；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "检查" + item[2] + item[3] + "确在分闸位置；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] + item[3] + "操作位置上锁；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "汇报发令人（发令人：              " + time + "）；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "再经调度令：将" + stationName + "10kV" + item[2]
+                + item[1] + item[3] + nextLine + "由热备用状态转检修状态";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "发令人：              指令号：          " + time + "；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] +
+                item[3] + "操作把手悬挂" + sign;
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] +
+                item[3].Replace("开关", "40地刀") + "操作位置解锁；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "合上" + item[2] + item[3].Replace("开关", "40地刀") + "（" + time + "）；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "检查" + item[2] + item[3].Replace("开关", "40地刀") + "确在合上位置；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "在" + item[2] + item[3].Replace("开关", "40地刀") + "操作位置上锁；";
+            nn++;             newTable.Cell(nn, 1).Range.Text = (nn - 1).ToString();
+            newTable.Cell(nn, 2).Range.Text = "汇报发令人（发令人：              " + time + "）。";
+        }
+               private bool OperationOrderGen(string path1,string dir)
+        {    
+            Word1 word1 = new Word1();
+            word1.Open(path1, false);             string txt = word1.curDoc.Content.Text;             string sheetType = TiQu(txt, "工作票类型", true);
+            sign = "“禁止合闸，有人工作”标示牌一块；";             if (sheetType.Contains("线路"))
+                sign = "“禁止合闸，线路有人工作”标示牌一块；";             List<string[]> order = new List<string[]>();             foreach (Table table in word1.curDoc.Tables)             {                 for (int k = 2; k <= table.Rows.Count; k++)
+                {
+                    string[] tmp1 = table.Rows[k].Cells[4].Range.Text.Replace("\r", "").Replace("\a", "").Split('线');
+                    string[] tmp2 = new string[4] { table.Rows[k].Cells[5].Range.Text.Replace("\r", "").Replace("\a", ""),
+                        table.Rows[k].Cells[3].Range.Text.Replace("\r", "").Replace("\a", ""), tmp1[0]+"线",tmp1[1] };
+                     order.Add(tmp2);
+                }   
+            }           
+            nextLine = "后段线路";             if (txt.Contains("转电"))
+                nextLine = "线路侧";              word1.curDoc.Content.Text = "";             foreach (string[] item in order)
+            {      
+                if(line2Station.ContainsKey(item[2]))
+                    stationName=line2Station[item[2]];
+                else
+                    stationName = "<"+item[2]+"所属厂站名未知>";
+                int nn = 2;
+                object pBreak=(int)WdBreakType.wdSectionBreakNextPage;                 switch (item[0])
+                {
+                    case "运行转检修":
+                        Operation2Repair(word1, item);
+                        word1.curDoc.Paragraphs.Last.Range.InsertBreak(ref pBreak);                         Repair2Operation(word1, item);                 
+                        break;
+                    case "检修转运行":
+                        Repair2Operation(word1, item);
+                        break;
+                     case "热备用转运行":
+                        word1.curDoc.Paragraphs.Last.Range.Text = "操作任务：将" + stationName + "10kV" + item[2]
+                            + item[1] + item[3] + nextLine + "由热备用状态转运行状态";                         InitialTable(word1);                         newTable.Cell(nn, 2).Range.Text = "由热备用状态转运行状态的操作票缺乏范例，待完善";
+                        break;
+                }
+                 if (item != order[order.Count - 1])                     word1.curDoc.Paragraphs.Last.Range.InsertBreak(ref pBreak);              }
+                               word1.SaveAs(dir+"             word1.wordApp.Quit();             return true;
+        }
+           private string TiQu(string txt, string key, bool type)
+        {
+            Regex reg1;
+            if (type)
+                reg1 = new Regex(key + @"+\S*", RegexOptions.Multiline);             else
+                reg1 = new Regex(@"\S*" + key, RegexOptions.Multiline);             MatchCollection matches = reg1.Matches(txt);
+            if (matches.Count > 0)
+                return matches[0].ToString();
+            return "";
+        }
+         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
+        {
+         }
+      }
+}
